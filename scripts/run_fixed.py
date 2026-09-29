@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from afriarag.core import (
@@ -174,8 +175,22 @@ def main():
 
     for lang in languages:
         qdf = load_split(root, lang, args.split)
-        if args.limit:
-            qdf = qdf.head(args.limit).copy()
+        if args.limit and args.limit < len(qdf):
+            # The official AfriSenti files can be label-ordered, so taking head(N)
+            # creates a degenerate smoke sample. Use a deterministic stratified
+            # sample when labels are available.
+            if "label" in qdf.columns and qdf["label"].notna().all() and qdf["label"].nunique() > 1:
+                qdf, _ = train_test_split(
+                    qdf,
+                    train_size=args.limit,
+                    random_state=cfg["seed"],
+                    stratify=qdf["label"],
+                )
+            else:
+                qdf = qdf.sample(n=args.limit, random_state=cfg["seed"])
+            qdf = qdf.sort_values("id").reset_index(drop=True)
+        if "label" in qdf.columns:
+            print(f"[sample] {lang}/{args.split}: {len(qdf)} rows; labels={qdf['label'].value_counts().to_dict()}")
 
         probe_train = train_all if lang in zero else train_by_lang[lang]
         if probe_train.empty:
@@ -220,6 +235,25 @@ def main():
         for i, (_, row) in enumerate(qdf.iterrows()):
             feats = query_features(row.text, lang, no_prob[i])
             score_cache: dict[tuple, np.ndarray] = {}
+            score_latency: dict[tuple, float] = {}
+
+            def get_bm25_scores(key, row_text):
+                cache_key = ("bm25", key)
+                if cache_key not in score_cache:
+                    t_score = time.perf_counter()
+                    score_cache[cache_key] = minmax(bm_cache[key].score(row_text))
+                    score_latency[cache_key] = (time.perf_counter() - t_score) * 1000
+                return score_cache[cache_key], score_latency[cache_key]
+
+            def get_dense_scores(key, pool_emb, qvec):
+                cache_key = ("dense", key)
+                if cache_key not in score_cache:
+                    t_score = time.perf_counter()
+                    score_cache[cache_key] = minmax(
+                        (pool_emb @ qvec).astype(np.float32)
+                    )
+                    score_latency[cache_key] = (time.perf_counter() - t_score) * 1000
+                return score_cache[cache_key], score_latency[cache_key]
 
             for policy in policies:
                 if lang in zero and policy["scope"] == "same":
@@ -242,36 +276,46 @@ def main():
 
                 scope = policy["scope"]
                 key, pool, pool_emb = get_pool(lang, scope)
-                t0 = time.perf_counter()
 
+                bm_scores = dense_scores = None
+                bm_ms = dense_ms = 0.0
                 if policy["retriever"] in {"bm25", "hybrid"}:
-                    cache_key = ("bm25", key)
-                    if cache_key not in score_cache:
-                        score_cache[cache_key] = minmax(bm_cache[key].score(row.text))
+                    bm_scores, bm_ms = get_bm25_scores(key, row.text)
 
                 if policy["retriever"] in {"dense", "hybrid"}:
                     if pool_emb is None or q_emb is None:
                         raise RuntimeError(
                             f"Dense embeddings unavailable for language={lang}, scope={scope}"
                         )
-                    cache_key = ("dense", key)
-                    if cache_key not in score_cache:
-                        score_cache[cache_key] = minmax(
-                            (pool_emb @ q_emb[i]).astype(np.float32)
-                        )
+                    dense_scores, dense_ms = get_dense_scores(key, pool_emb, q_emb[i])
 
+                fusion_ms = 0.0
                 if policy["retriever"] == "bm25":
-                    scores = score_cache[("bm25", key)]
+                    scores = bm_scores
+                    retrieval_ms = bm_ms
                 elif policy["retriever"] == "dense":
-                    scores = score_cache[("dense", key)]
+                    scores = dense_scores
+                    retrieval_ms = dense_ms
                 else:
-                    bs = score_cache[("bm25", key)]
-                    ds = score_cache[("dense", key)]
-                    scores = policy["alpha"] * ds + (1 - policy["alpha"]) * bs
+                    hkey = ("hybrid", key, float(policy["alpha"]))
+                    if hkey not in score_cache:
+                        t_fuse = time.perf_counter()
+                        score_cache[hkey] = (
+                            policy["alpha"] * dense_scores
+                            + (1 - policy["alpha"]) * bm_scores
+                        )
+                        score_latency[hkey] = (time.perf_counter() - t_fuse) * 1000
+                    scores = score_cache[hkey]
+                    fusion_ms = score_latency[hkey]
+                    # Report estimated standalone latency: both retrievers plus fusion,
+                    # even though caches avoid recomputation inside this experiment run.
+                    retrieval_ms = bm_ms + dense_ms + fusion_ms
 
+                t_topk = time.perf_counter()
                 idx, vals = topk(scores, policy["k"])
                 pred = weighted_vote(pool.iloc[idx].label.tolist(), vals.tolist())
-                elapsed = (time.perf_counter() - t0) * 1000
+                topk_ms = (time.perf_counter() - t_topk) * 1000
+                elapsed = retrieval_ms + topk_ms
 
                 rows.append({
                     "query_id": row.id, "text": row.text, "language": lang,

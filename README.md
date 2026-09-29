@@ -63,10 +63,17 @@ The raw official files remain in `data/afrisenti/`. Primary experiments use the 
 Before the full experiment, run a small Hausa smoke test:
 
 ```bash
-python scripts/run_fixed.py --config configs/stage1.yaml --split dev --languages hau --limit 200
+python scripts/run_fixed.py \
+  --config configs/stage1.yaml \
+  --split dev \
+  --languages hau \
+  --limit 200 \
+  --policies no_retrieval bm25_same_k3 bm25_same_k5 dense_same_k3 dense_same_k5 hybrid_same_k3 hybrid_same_k5
 ```
 
-If successful, run the full supervised development experiment:
+This smoke run intentionally excludes multilingual/cross-lingual policies so a CPU-only laptop does not need to embed the entire supervised corpus merely to validate the pipeline. Its outputs are tagged `dev_hau_n200_*.csv`.
+
+If successful, use a GPU-capable machine for the full supervised development experiment:
 
 ```bash
 python scripts/run_fixed.py --config configs/stage1.yaml --split dev

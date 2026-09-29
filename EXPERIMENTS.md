@@ -10,16 +10,39 @@ This is the operational protocol for the initial Sections 1–69 research scope.
 - **RQ4:** Does adaptive cross-lingual retrieval help strict zero-shot Oromo and Tigrinya?
 - **RQ5:** When does retrieval help, harm, or waste computation?
 
-## Stage 1A — dataset freeze and audit
+## Stage 1A — dataset freeze, audit, and leakage-safe view
 
-Run `scripts/download_data.py` and `scripts/audit_data.py`. Do not continue if cross-split duplicates indicate unexplained leakage. Commit manifests/statistics, never the downloaded tweet corpus.
+Run:
 
-Required outputs:
+```bash
+python scripts/download_data.py
+python scripts/audit_data.py
+python scripts/prepare_leakage_safe_data.py
+```
+
+The first audit found substantial exact cross-split duplication in the official AfriSenti files. Because retrieval can exploit verbatim train/evaluation duplicates, **the leakage-safe view is the primary experimental dataset**.
+
+The untouched official split is retained only for secondary historical comparability.
+
+Leakage-safe rules:
+
+1. Never modify the downloaded raw files.
+2. Remove exact duplicate text within the training retrieval pool.
+3. Remove conflicting-label exact training duplicates from the retrieval pool.
+4. Remove supervised dev queries found exactly in training.
+5. Remove supervised test queries found exactly in training or supervised dev.
+6. Deduplicate dev/test internally so repeated tweets do not overweight evaluation.
+7. Oromo and Tigrinya remain strict zero-shot: their train files contain no labelled examples and target-language labels are never used for tuning.
+8. Oromo/Tigrinya test examples are **not** removed merely because the same text appears in target-language dev, because target dev labels are not used by the strict zero-shot pipeline. This choice must remain frozen before zero-shot evaluation.
+
+Required outputs include:
 
 - `outputs/audit/dataset_manifest.csv`
-- `outputs/audit/exact_duplicates.csv`
 - `outputs/audit/cross_split_duplicates.csv`
-- `outputs/audit/audit_summary.json`
+- `outputs/audit/duplicate_label_conflicts.csv`
+- `outputs/audit/leakage_safe_manifest.csv`
+- `outputs/audit/leakage_safe_summary.json`
+- `outputs/audit/leakage_safe_exclusions.csv`
 
 ## Stage 1B — fixed development policies
 
@@ -35,7 +58,7 @@ For each development query, identify all policies that predict the gold label co
 
 ## Stage 1D — controller
 
-Train only on development-oracle labels. Inputs are query-side surface features and no-RAG confidence/entropy. No test or Oromo/Tigrinya label enters controller training.
+Train only on supervised development-oracle labels. Inputs are query-side surface features and no-RAG confidence/entropy. No test or Oromo/Tigrinya label enters controller training.
 
 ## Stage 1E — frozen supervised test
 
@@ -72,18 +95,3 @@ Proceed when the evidence supports adaptation. In particular, look for at least 
 4. Cross-/multilingual policies are selected non-trivially for difficult queries.
 
 If these are absent, revise the action space or hypothesis before adding LLM cost.
-
-## Final-paper metrics after the gate
-
-Macro-F1 is primary. Also report weighted-F1, accuracy, per-class F1, macro-language F1, retrieval rate, average k, latency, tokens/query, cost/query, retrieval harm/rescue, policy accuracy, oracle-compatible rate, regret and paired-bootstrap 95% confidence intervals.
-
-## Planned ablations for the frozen main system
-
-- remove no-retrieval action
-- dense only / sparse only
-- fixed alpha
-- fixed k
-- remove cross-lingual routing
-- remove uncertainty features
-- remove code-mixing/script features
-- remove retrieval-score features when those are added

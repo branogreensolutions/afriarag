@@ -39,24 +39,24 @@ Strict zero-shot: `orm tir`
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 python scripts/download_data.py
 python scripts/audit_data.py
 python scripts/prepare_leakage_safe_data.py
 ```
 
-Dense retrieval uses PyTorch through Sentence Transformers. The requirements keep NumPy below 2.0 and PyTorch at 2.5 or newer to avoid binary/API incompatibilities in the dense model stack.
+Dense retrieval uses PyTorch through Sentence Transformers. NumPy is kept below 2.0. Requirements select PyTorch 2.2.2 and compatible Transformers 4.x on Intel macOS (x86_64), where newer PyTorch wheels are unavailable. Other platforms use PyTorch 2.5 or newer.
 
-If an existing environment reports that PyTorch is too old or that a module was compiled for NumPy 1.x, repair the active virtual environment with:
+If you are using an existing Intel Mac environment, repair it with:
 
 ```bash
-python -m pip install --upgrade "numpy>=1.26,<2.0" "torch>=2.5,<3"
+python -m pip install --upgrade "numpy>=1.26,<2.0" "torch==2.2.2" "transformers>=4.49,<5" "sentence-transformers>=3.4,<4"
 python -m pip check
 python -c "import numpy, torch, transformers, sentence_transformers; print('numpy', numpy.__version__, '| torch', torch.__version__, '| transformers', transformers.__version__)"
 ```
 
-Then rerun the experiment command. On macOS, install PyTorch from the same active `.venv` with `python -m pip`; PyTorch provides macOS wheels through pip.
+Then rerun the experiment command. Use `python -m pip` while the project `.venv` is active so packages install into the same environment used to run the scripts.
 
 The raw official files remain in `data/afrisenti/`. Primary experiments use the leakage-safe view in `data/afrisenti_clean/`.
 

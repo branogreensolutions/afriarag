@@ -1,0 +1,43 @@
+seed: 42
+
+data:
+  root: data/afrisenti
+  supervised_languages: [amh, arq, ary, hau, ibo, kin, pcm, por, swa, tso, twi, yor]
+  zero_shot_languages: [orm, tir]
+
+dense:
+  model: intfloat/multilingual-e5-base
+  batch_size: 64
+  cache_dir: outputs/cache
+
+probe:
+  max_features: 120000
+  C: 3.0
+
+policies:
+  - {name: no_retrieval, retriever: none, scope: none, k: 0, alpha: 0.0}
+  - {name: bm25_same_k3, retriever: bm25, scope: same, k: 3, alpha: 0.0}
+  - {name: bm25_same_k5, retriever: bm25, scope: same, k: 5, alpha: 0.0}
+  - {name: dense_same_k3, retriever: dense, scope: same, k: 3, alpha: 1.0}
+  - {name: dense_same_k5, retriever: dense, scope: same, k: 5, alpha: 1.0}
+  - {name: hybrid_same_k3, retriever: hybrid, scope: same, k: 3, alpha: 0.5}
+  - {name: hybrid_same_k5, retriever: hybrid, scope: same, k: 5, alpha: 0.5}
+  - {name: dense_multi_k3, retriever: dense, scope: multilingual, k: 3, alpha: 1.0}
+  - {name: hybrid_multi_k3, retriever: hybrid, scope: multilingual, k: 3, alpha: 0.5}
+  - {name: dense_cross_k3, retriever: dense, scope: cross, k: 3, alpha: 1.0}
+  - {name: hybrid_cross_k3, retriever: hybrid, scope: cross, k: 3, alpha: 0.5}
+  - {name: hybrid_cross_k5, retriever: hybrid, scope: cross, k: 5, alpha: 0.5}
+
+oracle:
+  k_cost: 0.001
+  latency_cost: 0.0
+  prefer_no_retrieval_on_tie: true
+
+controller:
+  n_estimators: 500
+  min_samples_leaf: 3
+  class_weight: balanced_subsample
+
+reporting:
+  primary_metric: macro_f1
+  bootstrap_samples: 2000

@@ -1,27 +1,76 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from afriarag.core import (
-    BM25Retriever, CharNgramProbe, DenseRetriever, classification_metrics,
-    load_pool, load_split, minmax, query_features, read_config, topk, weighted_vote
+    BM25Retriever,
+    CharNgramProbe,
+    DenseEncoder,
+    classification_metrics,
+    load_split,
+    minmax,
+    query_features,
+    read_config,
+    topk,
+    weighted_vote,
 )
 
-def scope_pool(train_all, target_lang, scope):
-    if scope == "same":
-        return train_all[train_all.language == target_lang].reset_index(drop=True)
-    if scope == "cross":
-        return train_all[train_all.language != target_lang].reset_index(drop=True)
-    if scope == "multilingual":
-        return train_all.reset_index(drop=True)
-    raise ValueError(scope)
+
+def frame_signature(df: pd.DataFrame) -> str:
+    h = hashlib.sha256()
+    for row in df[["id", "text"]].itertuples(index=False):
+        h.update(str(row.id).encode("utf-8", errors="ignore"))
+        h.update(b"\0")
+        h.update(str(row.text).encode("utf-8", errors="ignore"))
+        h.update(b"\n")
+    return h.hexdigest()[:16]
+
+
+def model_slug(model_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", model_name)
+
+
+def cached_embeddings(
+    encoder: DenseEncoder,
+    df: pd.DataFrame,
+    cache_root: str | Path,
+    cache_name: str,
+    query: bool = False,
+) -> np.ndarray:
+    cache_dir = Path(cache_root) / model_slug(encoder.model_name)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    sig = frame_signature(df)
+    path = cache_dir / f"{cache_name}_{sig}.npy"
+
+    if path.exists():
+        arr = np.load(path)
+        if arr.shape[0] == len(df):
+            print(f"[dense] cache hit: {path} -> {arr.shape}")
+            return np.asarray(arr, dtype="float32")
+        print(f"[dense] ignoring stale cache with wrong row count: {path}")
+
+    kind = "queries" if query else "passages"
+    print(f"[dense] encoding {kind}: {cache_name} ({len(df):,} rows)")
+    texts = df["text"].tolist()
+    arr = (
+        encoder.encode_queries(texts, show_progress_bar=True)
+        if query
+        else encoder.encode_passages(texts, show_progress_bar=True)
+    )
+    np.save(path, arr)
+    print(f"[dense] saved cache: {path} -> {arr.shape}")
+    return arr
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -29,6 +78,12 @@ def main():
     ap.add_argument("--split", default="dev")
     ap.add_argument("--languages", nargs="*")
     ap.add_argument("--limit", type=int, default=None, help="Optional per-language debug limit")
+    ap.add_argument(
+        "--policies",
+        nargs="*",
+        help="Optional exact policy names to run. Useful for a small smoke test.",
+    )
+    ap.add_argument("--run-name", default=None, help="Optional output tag")
     args = ap.parse_args()
 
     cfg = read_config(args.config)
@@ -36,19 +91,93 @@ def main():
     supervised = cfg["data"]["supervised_languages"]
     zero = cfg["data"]["zero_shot_languages"]
     languages = args.languages or supervised
-    train_all = load_pool(root, supervised)
 
-    pool_cache = {}
-    bm_cache = {}
-    dense_cache = {}
+    configured = cfg["policies"]
+    if args.policies:
+        known = {p["name"] for p in configured}
+        missing = sorted(set(args.policies) - known)
+        if missing:
+            raise SystemExit(f"Unknown policies: {missing}. Known policies: {sorted(known)}")
+        policies = [p for p in configured if p["name"] in set(args.policies)]
+    else:
+        policies = configured
+
+    print("Policies:", ", ".join(p["name"] for p in policies))
+
+    train_by_lang = {}
+    for lang in supervised:
+        train_by_lang[lang] = load_split(root, lang, "train")
+    train_all = pd.concat([train_by_lang[l] for l in supervised], ignore_index=True)
+
+    applicable_dense = [
+        p for p in policies if p["retriever"] in {"dense", "hybrid"}
+    ]
+    dense_needed = bool(applicable_dense)
+    dense_scopes = {p["scope"] for p in applicable_dense}
+
+    # Encode each training language once and cache it. Per-language caches let a
+    # small same-language smoke test be reused by later multilingual runs.
+    emb_by_lang: dict[str, np.ndarray] = {}
+    encoder = None
+    if dense_needed:
+        if dense_scopes & {"multilingual", "cross"}:
+            dense_train_langs = list(supervised)
+        else:
+            dense_train_langs = [l for l in languages if l in supervised]
+
+        if dense_train_langs:
+            encoder = DenseEncoder(cfg["dense"]["model"], cfg["dense"]["batch_size"])
+            for lang in dense_train_langs:
+                emb_by_lang[lang] = cached_embeddings(
+                    encoder,
+                    train_by_lang[lang],
+                    cfg["dense"]["cache_dir"],
+                    f"train_{lang}",
+                    query=False,
+                )
+
+    pool_cache: dict[tuple, pd.DataFrame] = {}
+    emb_pool_cache: dict[tuple, np.ndarray] = {}
+    bm_cache: dict[tuple, BM25Retriever] = {}
     rows, metric_rows = [], []
+
+    def get_pool(target_lang: str, scope: str):
+        key = ("multilingual",) if scope == "multilingual" else (scope, target_lang)
+        if key in pool_cache:
+            return key, pool_cache[key], emb_pool_cache.get(key)
+
+        if scope == "same":
+            pool = train_by_lang[target_lang].reset_index(drop=True)
+            emb = emb_by_lang.get(target_lang)
+        elif scope == "multilingual":
+            pool = train_all.reset_index(drop=True)
+            emb = (
+                np.vstack([emb_by_lang[l] for l in supervised])
+                if dense_needed and all(l in emb_by_lang for l in supervised)
+                else None
+            )
+        elif scope == "cross":
+            langs = [l for l in supervised if l != target_lang]
+            pool = pd.concat([train_by_lang[l] for l in langs], ignore_index=True)
+            emb = (
+                np.vstack([emb_by_lang[l] for l in langs])
+                if dense_needed and all(l in emb_by_lang for l in langs)
+                else None
+            )
+        else:
+            raise ValueError(scope)
+
+        pool_cache[key] = pool
+        if emb is not None:
+            emb_pool_cache[key] = emb
+        return key, pool, emb
 
     for lang in languages:
         qdf = load_split(root, lang, args.split)
         if args.limit:
-            qdf = qdf.head(args.limit)
+            qdf = qdf.head(args.limit).copy()
 
-        probe_train = train_all if lang in zero else train_all[train_all.language == lang]
+        probe_train = train_all if lang in zero else train_by_lang[lang]
         if probe_train.empty:
             probe_train = train_all
         probe = CharNgramProbe(
@@ -57,15 +186,49 @@ def main():
         no_pred = probe.predict(qdf.text)
         no_prob = probe.predict_proba(qdf.text)
 
-        for policy in cfg["policies"]:
-            if lang in zero and policy["scope"] == "same":
-                continue
-            pname = policy["name"]
+        lang_dense_policies = [
+            p for p in policies
+            if p["retriever"] in {"dense", "hybrid"}
+            and not (lang in zero and p["scope"] == "same")
+        ]
+        q_emb = None
+        if lang_dense_policies:
+            if encoder is None:
+                encoder = DenseEncoder(cfg["dense"]["model"], cfg["dense"]["batch_size"])
+            q_emb = cached_embeddings(
+                encoder,
+                qdf,
+                cfg["dense"]["cache_dir"],
+                f"query_{lang}_{args.split}_n{len(qdf)}",
+                query=True,
+            )
 
-            if policy["retriever"] == "none":
-                for i, (_, row) in enumerate(qdf.iterrows()):
-                    feats = query_features(row.text, lang, no_prob[i])
-                    gold = row.get("label")
+        # Prepare only the scopes needed by selected policies.
+        scopes = {
+            p["scope"] for p in policies
+            if p["scope"] != "none" and not (lang in zero and p["scope"] == "same")
+        }
+        for scope in scopes:
+            key, pool, _ = get_pool(lang, scope)
+            if any(
+                p["scope"] == scope and p["retriever"] in {"bm25", "hybrid"}
+                for p in policies
+            ) and key not in bm_cache:
+                print(f"[bm25] indexing {scope} pool for {lang}: {len(pool):,} rows")
+                bm_cache[key] = BM25Retriever(pool.text.tolist())
+
+        for i, (_, row) in enumerate(qdf.iterrows()):
+            feats = query_features(row.text, lang, no_prob[i])
+            score_cache: dict[tuple, np.ndarray] = {}
+
+            for policy in policies:
+                if lang in zero and policy["scope"] == "same":
+                    continue
+
+                pname = policy["name"]
+                gold = row.get("label")
+
+                if policy["retriever"] == "none":
                     pred = no_pred[i]
                     rows.append({
                         "query_id": row.id, "text": row.text, "language": lang,
@@ -75,37 +238,41 @@ def main():
                         "latency_ms": 0.0, "top_score": 0.0,
                         "retrieved_ids": "", "retrieved_languages": "", **feats
                     })
-                continue
+                    continue
 
-            scope = policy["scope"]
-            pool_key = ("multilingual",) if scope == "multilingual" else (scope, lang)
-            if pool_key not in pool_cache:
-                pool_cache[pool_key] = scope_pool(train_all, lang, scope)
-            pool = pool_cache[pool_key]
-
-            if policy["retriever"] in {"bm25","hybrid"} and pool_key not in bm_cache:
-                bm_cache[pool_key] = BM25Retriever(pool.text.tolist())
-            if policy["retriever"] in {"dense","hybrid"} and pool_key not in dense_cache:
-                dense_cache[pool_key] = DenseRetriever(
-                    pool.text.tolist(), cfg["dense"]["model"], cfg["dense"]["batch_size"]
-                )
-
-            for i, (_, row) in enumerate(qdf.iterrows()):
+                scope = policy["scope"]
+                key, pool, pool_emb = get_pool(lang, scope)
                 t0 = time.perf_counter()
+
+                if policy["retriever"] in {"bm25", "hybrid"}:
+                    cache_key = ("bm25", key)
+                    if cache_key not in score_cache:
+                        score_cache[cache_key] = minmax(bm_cache[key].score(row.text))
+
+                if policy["retriever"] in {"dense", "hybrid"}:
+                    if pool_emb is None or q_emb is None:
+                        raise RuntimeError(
+                            f"Dense embeddings unavailable for language={lang}, scope={scope}"
+                        )
+                    cache_key = ("dense", key)
+                    if cache_key not in score_cache:
+                        score_cache[cache_key] = minmax(
+                            (pool_emb @ q_emb[i]).astype(np.float32)
+                        )
+
                 if policy["retriever"] == "bm25":
-                    scores = minmax(bm_cache[pool_key].score(row.text))
+                    scores = score_cache[("bm25", key)]
                 elif policy["retriever"] == "dense":
-                    scores = minmax(dense_cache[pool_key].score(row.text))
+                    scores = score_cache[("dense", key)]
                 else:
-                    bs = minmax(bm_cache[pool_key].score(row.text))
-                    ds = minmax(dense_cache[pool_key].score(row.text))
+                    bs = score_cache[("bm25", key)]
+                    ds = score_cache[("dense", key)]
                     scores = policy["alpha"] * ds + (1 - policy["alpha"]) * bs
 
                 idx, vals = topk(scores, policy["k"])
                 pred = weighted_vote(pool.iloc[idx].label.tolist(), vals.tolist())
                 elapsed = (time.perf_counter() - t0) * 1000
-                feats = query_features(row.text, lang, no_prob[i])
-                gold = row.get("label")
+
                 rows.append({
                     "query_id": row.id, "text": row.text, "language": lang,
                     "gold": gold, "policy": pname, "retriever": policy["retriever"],
@@ -129,15 +296,32 @@ def main():
                     "latency_ms": float(g.latency_ms.mean())
                 })
 
+    if args.run_name:
+        tag = args.run_name
+    elif args.languages or args.limit:
+        parts = [args.split]
+        if args.languages:
+            parts.append("-".join(languages))
+        if args.limit:
+            parts.append(f"n{args.limit}")
+        tag = "_".join(parts)
+    else:
+        tag = args.split
+
     outdir = Path("outputs/fixed")
     outdir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(outdir / f"{args.split}_predictions.csv", index=False)
-    pd.DataFrame(metric_rows).to_csv(outdir / f"{args.split}_metrics.csv", index=False)
+    pred_path = outdir / f"{tag}_predictions.csv"
+    metric_path = outdir / f"{tag}_metrics.csv"
+    pd.DataFrame(rows).to_csv(pred_path, index=False)
+    pd.DataFrame(metric_rows).to_csv(metric_path, index=False)
+
     print(json.dumps({
-        "predictions": str(outdir / f"{args.split}_predictions.csv"),
-        "metrics": str(outdir / f"{args.split}_metrics.csv"),
-        "rows": len(rows)
+        "predictions": str(pred_path),
+        "metrics": str(metric_path),
+        "rows": len(rows),
+        "policies": [p["name"] for p in policies],
     }, indent=2))
+
 
 if __name__ == "__main__":
     main()

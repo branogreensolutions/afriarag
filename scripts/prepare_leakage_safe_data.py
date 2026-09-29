@@ -87,6 +87,11 @@ def main(config="configs/stage1.yaml"):
             dev = dev[~mask].copy()
 
         if lc.get("deduplicate_eval_within_split", True) and not dev.empty:
+            dev_clean, dev_conflicts = remove_conflicting_duplicates(dev)
+            if dev_conflicts:
+                for _, r in dev[dev.text_key.isin(dev_conflicts)].iterrows():
+                    exclusions.append({"language":lang,"split":"dev","id":r.id,"reason":"conflicting_duplicate_within_dev","text_key":r.text_key})
+            dev = dev_clean
             mask = dev.duplicated("text_key", keep="first")
             for _, r in dev[mask].iterrows():
                 exclusions.append({"language":lang,"split":"dev","id":r.id,"reason":"duplicate_within_dev","text_key":r.text_key})
@@ -114,6 +119,11 @@ def main(config="configs/stage1.yaml"):
             test = test[~mask].copy()
 
         if lc.get("deduplicate_eval_within_split", True) and not test.empty:
+            test_clean, test_conflicts = remove_conflicting_duplicates(test)
+            if test_conflicts:
+                for _, r in test[test.text_key.isin(test_conflicts)].iterrows():
+                    exclusions.append({"language":lang,"split":"test","id":r.id,"reason":"conflicting_duplicate_within_test","text_key":r.text_key})
+            test = test_clean
             mask = test.duplicated("text_key", keep="first")
             for _, r in test[mask].iterrows():
                 exclusions.append({"language":lang,"split":"test","id":r.id,"reason":"duplicate_within_test","text_key":r.text_key})

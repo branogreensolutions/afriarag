@@ -237,23 +237,36 @@ def main():
             score_cache: dict[tuple, np.ndarray] = {}
             score_latency: dict[tuple, float] = {}
 
+            raw_score_cache: dict[tuple, np.ndarray] = {}
+
             def get_bm25_scores(key, row_text):
                 cache_key = ("bm25", key)
                 if cache_key not in score_cache:
                     t_score = time.perf_counter()
-                    score_cache[cache_key] = minmax(bm_cache[key].score(row_text))
+                    raw = bm_cache[key].score(row_text).astype(np.float32)
+                    raw_score_cache[cache_key] = raw
+                    score_cache[cache_key] = minmax(raw)
                     score_latency[cache_key] = (time.perf_counter() - t_score) * 1000
-                return score_cache[cache_key], score_latency[cache_key]
+                return score_cache[cache_key], raw_score_cache[cache_key], score_latency[cache_key]
 
             def get_dense_scores(key, pool_emb, qvec):
                 cache_key = ("dense", key)
                 if cache_key not in score_cache:
                     t_score = time.perf_counter()
-                    score_cache[cache_key] = minmax(
-                        (pool_emb @ qvec).astype(np.float32)
-                    )
+                    raw = (pool_emb @ qvec).astype(np.float32)
+                    raw_score_cache[cache_key] = raw
+                    score_cache[cache_key] = minmax(raw)
                     score_latency[cache_key] = (time.perf_counter() - t_score) * 1000
-                return score_cache[cache_key], score_latency[cache_key]
+                return score_cache[cache_key], raw_score_cache[cache_key], score_latency[cache_key]
+
+            def top_stats(scores):
+                if scores is None or len(scores) == 0:
+                    return 0.0, 0.0
+                if len(scores) == 1:
+                    return float(scores[0]), 0.0
+                idx2 = np.argpartition(-scores, 1)[:2]
+                vals = np.sort(scores[idx2])[::-1]
+                return float(vals[0]), float(vals[0] - vals[1])
 
             for policy in policies:
                 if lang in zero and policy["scope"] == "same":
@@ -269,8 +282,11 @@ def main():
                         "gold": gold, "policy": pname, "retriever": "none",
                         "scope": "none", "k": 0, "alpha": 0.0,
                         "prediction": pred, "correct": bool(pred == gold),
-                        "latency_ms": 0.0, "top_score": 0.0,
-                        "retrieved_ids": "", "retrieved_languages": "", **feats
+                        "latency_ms": 0.0, "top_score": 0.0, "score_margin": 0.0,
+                        "bm25_top_raw": 0.0, "bm25_margin_raw": 0.0,
+                        "dense_top_raw": 0.0, "dense_margin_raw": 0.0,
+                        "retrieved_ids": "", "retrieved_languages": "",
+                        "retrieved_labels": "", "retrieved_scores": "", **feats
                     })
                     continue
 
@@ -278,16 +294,17 @@ def main():
                 key, pool, pool_emb = get_pool(lang, scope)
 
                 bm_scores = dense_scores = None
+                bm_raw = dense_raw = None
                 bm_ms = dense_ms = 0.0
                 if policy["retriever"] in {"bm25", "hybrid"}:
-                    bm_scores, bm_ms = get_bm25_scores(key, row.text)
+                    bm_scores, bm_raw, bm_ms = get_bm25_scores(key, row.text)
 
                 if policy["retriever"] in {"dense", "hybrid"}:
                     if pool_emb is None or q_emb is None:
                         raise RuntimeError(
                             f"Dense embeddings unavailable for language={lang}, scope={scope}"
                         )
-                    dense_scores, dense_ms = get_dense_scores(key, pool_emb, q_emb[i])
+                    dense_scores, dense_raw, dense_ms = get_dense_scores(key, pool_emb, q_emb[i])
 
                 fusion_ms = 0.0
                 if policy["retriever"] == "bm25":
@@ -317,15 +334,26 @@ def main():
                 topk_ms = (time.perf_counter() - t_topk) * 1000
                 elapsed = retrieval_ms + topk_ms
 
+                policy_top, policy_margin = top_stats(scores)
+                bm_top_raw, bm_margin_raw = top_stats(bm_raw)
+                dense_top_raw, dense_margin_raw = top_stats(dense_raw)
+
                 rows.append({
                     "query_id": row.id, "text": row.text, "language": lang,
                     "gold": gold, "policy": pname, "retriever": policy["retriever"],
                     "scope": scope, "k": policy["k"], "alpha": policy["alpha"],
                     "prediction": pred, "correct": bool(pred == gold),
                     "latency_ms": elapsed,
-                    "top_score": float(vals[0]) if len(vals) else 0.0,
+                    "top_score": policy_top,
+                    "score_margin": policy_margin,
+                    "bm25_top_raw": bm_top_raw,
+                    "bm25_margin_raw": bm_margin_raw,
+                    "dense_top_raw": dense_top_raw,
+                    "dense_margin_raw": dense_margin_raw,
                     "retrieved_ids": ",".join(pool.iloc[idx].id.astype(str)),
                     "retrieved_languages": ",".join(pool.iloc[idx].language.astype(str)),
+                    "retrieved_labels": ",".join(pool.iloc[idx].label.astype(str)),
+                    "retrieved_scores": ",".join(f"{float(v):.8f}" for v in vals),
                     **feats
                 })
 

@@ -147,35 +147,55 @@ class BM25Retriever:
         return scores
 
 
-class DenseRetriever:
-    def __init__(self, texts: list[str], model_name: str, batch_size: int = 64):
+class DenseEncoder:
+    """Sentence-transformer encoder used by the exact dense retriever.
+
+    Stage 1 uses exact cosine similarity via NumPy matrix multiplication.
+    FAISS is intentionally not required: the frozen supervised pool is small
+    enough for exact scoring, and avoiding a native ANN library improves
+    reproducibility across macOS/Linux machines.
+    """
+
+    def __init__(self, model_name: str, batch_size: int = 64):
         try:
-            import faiss
             from sentence_transformers import SentenceTransformer
         except ImportError as e:
             raise RuntimeError(
-                "Dense retrieval requires sentence-transformers and faiss-cpu."
+                "Dense retrieval requires sentence-transformers."
             ) from e
+        self.model_name = model_name
+        self.batch_size = batch_size
         self.model = SentenceTransformer(model_name)
-        passages = [f"passage: {x}" for x in texts]
+
+    def encode_passages(self, texts: list[str], show_progress_bar: bool = True) -> np.ndarray:
         emb = self.model.encode(
-            passages,
-            batch_size=batch_size,
+            [f"passage: {x}" for x in texts],
+            batch_size=self.batch_size,
             normalize_embeddings=True,
-            show_progress_bar=True,
+            show_progress_bar=show_progress_bar,
         )
-        self.emb = np.asarray(emb, dtype="float32")
-        self.index = faiss.IndexFlatIP(self.emb.shape[1])
-        self.index.add(self.emb)
+        return np.asarray(emb, dtype="float32")
+
+    def encode_queries(self, texts: list[str], show_progress_bar: bool = True) -> np.ndarray:
+        emb = self.model.encode(
+            [f"query: {x}" for x in texts],
+            batch_size=self.batch_size,
+            normalize_embeddings=True,
+            show_progress_bar=show_progress_bar,
+        )
+        return np.asarray(emb, dtype="float32")
+
+
+class DenseRetriever:
+    """Compatibility wrapper for exact dense retrieval without FAISS."""
+
+    def __init__(self, texts: list[str], model_name: str, batch_size: int = 64):
+        self.encoder = DenseEncoder(model_name, batch_size)
+        self.emb = self.encoder.encode_passages(texts)
 
     def score(self, query: str) -> np.ndarray:
-        q = self.model.encode(
-            [f"query: {query}"],
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-        q = np.asarray(q, dtype="float32")
-        return (self.emb @ q[0]).astype(np.float32)
+        q = self.encoder.encode_queries([query], show_progress_bar=False)[0]
+        return (self.emb @ q).astype(np.float32)
 
 
 def minmax(x: np.ndarray) -> np.ndarray:

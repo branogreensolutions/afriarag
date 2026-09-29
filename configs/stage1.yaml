@@ -1,9 +1,20 @@
 seed: 42
 
 data:
-  root: data/afrisenti
+  raw_root: data/afrisenti
+  root: data/afrisenti_clean
+  primary_view: leakage_safe
   supervised_languages: [amh, arq, ary, hau, ibo, kin, pcm, por, swa, tso, twi, yor]
   zero_shot_languages: [orm, tir]
+
+leakage:
+  deduplicate_train: true
+  drop_conflicting_train_duplicates: true
+  drop_dev_seen_in_train: true
+  drop_test_seen_in_train: true
+  drop_test_seen_in_dev_supervised: true
+  drop_test_seen_in_dev_zero_shot: false
+  deduplicate_eval_within_split: true
 
 dense:
   model: intfloat/multilingual-e5-base

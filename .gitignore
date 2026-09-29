@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+.env
+data/afrisenti/
+outputs/**/*.csv
+outputs/**/*.json
+outputs/**/*.joblib
+outputs/**/*.npy
+outputs/**/*.png
+!outputs/.gitkeep

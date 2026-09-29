@@ -5,6 +5,7 @@ __pycache__/
 .DS_Store
 .env
 data/afrisenti/
+data/afrisenti_clean/
 outputs/**/*.csv
 outputs/**/*.json
 outputs/**/*.joblib

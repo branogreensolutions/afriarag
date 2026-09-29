@@ -115,35 +115,51 @@ class CharNgramProbe:
 
 
 class BM25Retriever:
+    """Exact Okapi BM25 using an inverted postings index.
+
+    This avoids scanning every document for every query term, which matters for
+    the multilingual/cross-lingual Stage-1 pools.
+    """
+
     def __init__(self, texts: list[str], k1: float = 1.5, b: float = 0.75):
         self.k1, self.b = k1, b
         self.docs = [self._tok(x) for x in texts]
         self.n = len(self.docs)
-        self.avgdl = sum(len(d) for d in self.docs) / max(1, self.n)
+        self.doc_len = np.asarray([len(d) for d in self.docs], dtype=np.float32)
+        self.avgdl = float(self.doc_len.mean()) if self.n else 0.0
         self.df = Counter()
-        for d in self.docs:
-            self.df.update(set(d))
-        self.tf = [Counter(d) for d in self.docs]
+        self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
+
+        for i, doc in enumerate(self.docs):
+            tf = Counter(doc)
+            for term, freq in tf.items():
+                self.df[term] += 1
+                self.postings[term].append((i, int(freq)))
 
     @staticmethod
     def _tok(text: str) -> list[str]:
         return re.findall(r"\w+", text.lower(), flags=re.UNICODE)
 
     def score(self, query: str) -> np.ndarray:
-        q = self._tok(query)
         scores = np.zeros(self.n, dtype=np.float32)
-        for term in q:
-            df = self.df.get(term, 0)
-            if df == 0:
+        if self.n == 0:
+            return scores
+
+        # Repeated query terms should not cause redundant postings scans.
+        for term in set(self._tok(query)):
+            postings = self.postings.get(term)
+            if not postings:
                 continue
+
+            df = self.df[term]
             idf = math.log(1 + (self.n - df + 0.5) / (df + 0.5))
-            for i, tf in enumerate(self.tf):
-                f = tf.get(term, 0)
-                if not f:
-                    continue
-                dl = len(self.docs[i])
-                denom = f + self.k1 * (1 - self.b + self.b * dl / max(self.avgdl, 1e-9))
+            for i, f in postings:
+                dl = float(self.doc_len[i])
+                denom = f + self.k1 * (
+                    1 - self.b + self.b * dl / max(self.avgdl, 1e-9)
+                )
                 scores[i] += idf * (f * (self.k1 + 1) / denom)
+
         return scores
 
 

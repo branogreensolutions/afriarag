@@ -31,7 +31,7 @@ Leakage-safe rules:
 3. Remove conflicting-label exact training duplicates from the retrieval pool.
 4. Remove supervised dev queries found exactly in training.
 5. Remove supervised test queries found exactly in training or supervised dev.
-6. Deduplicate dev/test internally so repeated tweets do not overweight evaluation.
+6. Within dev/test, collapse identical duplicates only when their labels agree; if identical text has conflicting labels within the same split, exclude the entire conflicting group rather than arbitrarily retaining one label.
 7. Oromo and Tigrinya remain strict zero-shot: their train files contain no labelled examples and target-language labels are never used for tuning.
 8. Oromo/Tigrinya test examples are **not** removed merely because the same text appears in target-language dev, because target dev labels are not used by the strict zero-shot pipeline. This choice must remain frozen before zero-shot evaluation.
 

@@ -11,4 +11,5 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install numpy pandas scikit-learn scipy pyyaml pytest
+      - run: python -m compileall -q src scripts
       - run: pytest -q

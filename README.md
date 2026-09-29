@@ -10,7 +10,7 @@ The core policy is:
 a(q) = {retrieve?, retriever, scope, k, alpha}
 ```
 
-where the retriever is BM25, dense, or hybrid; scope is same-language, multilingual, or cross-lingual; k is retrieval depth; and alpha controls dense-vs-sparse fusion.
+where the retriever is BM25, dense, or hybrid; scope is same-language, multilingual, or cross-lingual; `k` is retrieval depth; and `alpha` controls dense-vs-sparse fusion.
 
 ## Stage 1 scope
 
@@ -29,9 +29,9 @@ The repository currently implements the initial Sections 1–69 research scope:
 
 ## Languages
 
-Supervised: amh arq ary hau ibo kin pcm por swa tso twi yor
+Supervised: `amh arq ary hau ibo kin pcm por swa tso twi yor`
 
-Strict zero-shot: orm tir
+Strict zero-shot: `orm tir`
 
 ## First run
 
@@ -56,9 +56,9 @@ python -m pip check
 python -c "import numpy, torch, transformers, sentence_transformers; print('numpy', numpy.__version__, '| torch', torch.__version__, '| transformers', transformers.__version__)"
 ```
 
-Then rerun the experiment command. On macOS, install PyTorch from the same active .venv with python -m pip; PyTorch provides macOS wheels through pip.
+Then rerun the experiment command. On macOS, install PyTorch from the same active `.venv` with `python -m pip`; PyTorch provides macOS wheels through pip.
 
-The raw official files remain in data/afrisenti/. Primary experiments use the leakage-safe view in data/afrisenti_clean/.
+The raw official files remain in `data/afrisenti/`. Primary experiments use the leakage-safe view in `data/afrisenti_clean/`.
 
 Before the full experiment, run a small Hausa smoke test:
 
@@ -76,4 +76,4 @@ python scripts/train_controller.py --oracle outputs/oracle/oracle_labels.csv
 
 Do **not** run the frozen supervised test evaluation until the development-stage policy/controller choices have been reviewed and frozen.
 
-See RESEARCH_DESIGN.md and EXPERIMENTS.md for the protocol.
+See `RESEARCH_DESIGN.md` and `EXPERIMENTS.md` for the protocol.

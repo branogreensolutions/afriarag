@@ -14,9 +14,10 @@ where the retriever is BM25, dense, or hybrid; scope is same-language, multiling
 
 ## Stage 1 scope
 
-This repository initially implements Sections 1–69 of the research design:
+The repository currently implements the initial Sections 1–69 research scope:
 
 - AfriSenti data acquisition and audit
+- leakage-safe split preparation
 - no-retrieval baseline
 - BM25, dense, and hybrid retrieval
 - same-language, multilingual, and cross-lingual retrieval
@@ -25,7 +26,6 @@ This repository initially implements Sections 1–69 of the research design:
 - adaptive controller
 - strict zero-shot Oromo/Tigrinya evaluation
 - effectiveness, efficiency, retrieval-harm, and significance analysis
-- reproducible experiment logging
 
 ## Languages
 
@@ -42,12 +42,25 @@ pip install -r requirements.txt
 
 python scripts/download_data.py
 python scripts/audit_data.py
+python scripts/prepare_leakage_safe_data.py
+```
+
+The raw official files remain in `data/afrisenti/`. Primary experiments use the leakage-safe view in `data/afrisenti_clean/`.
+
+Before the full experiment, run a small Hausa smoke test:
+
+```bash
+python scripts/run_fixed.py --config configs/stage1.yaml --split dev --languages hau --limit 200
+```
+
+If successful, run the full supervised development experiment:
+
+```bash
 python scripts/run_fixed.py --config configs/stage1.yaml --split dev
 python scripts/build_oracle.py --input outputs/fixed/dev_predictions.csv
 python scripts/train_controller.py --oracle outputs/oracle/oracle_labels.csv
-python scripts/evaluate_adaptive.py --config configs/stage1.yaml --split test
 ```
 
-Do not run the final test evaluation until the development-stage policy and controller choices are frozen.
+Do **not** run the frozen supervised test evaluation until the development-stage policy/controller choices have been reviewed and frozen.
 
 See `RESEARCH_DESIGN.md` and `EXPERIMENTS.md` for the protocol.

@@ -147,6 +147,7 @@ def main():
         seed=seed,
         data_seed=seed,
         fp16=use_fp16,
+        gradient_checkpointing=bool(tcfg.get("gradient_checkpointing", True)),
         report_to=[],
     )
 

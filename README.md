@@ -77,10 +77,42 @@ If successful, use a GPU-capable machine for the full supervised development exp
 
 ```bash
 python scripts/run_fixed.py --config configs/stage1.yaml --split dev
-python scripts/build_oracle.py --input outputs/fixed/dev_predictions.csv
-python scripts/train_controller.py --oracle outputs/oracle/oracle_labels.csv
+python scripts/build_oracle.py --input outputs/fixed/dev_predictions.csv --tag dev
+python scripts/train_controller.py --predictions outputs/fixed/dev_predictions.csv
 ```
 
-Do **not** run the frozen supervised test evaluation until the development-stage policy/controller choices have been reviewed and frozen.
+Stage 1 has now completed its frozen held-out evaluation. The final interpretation
+is recorded in `docs/FINAL_RESULTS_STAGE1.md`.
 
-See `RESEARCH_DESIGN.md` and `EXPERIMENTS.md` for the protocol.
+## Publication-analysis package
+
+All post-freeze publication analyses are generated from frozen outputs. They do
+not retrain or retune the Stage-1 system.
+
+Run the development-only explanatory ablations first:
+
+```bash
+python scripts/run_publication_ablations.py
+```
+
+Then build the final publication package:
+
+```bash
+python scripts/build_publication_package.py
+```
+
+Outputs are written to `outputs/publication/`, including:
+
+- main/fixed-policy/per-language/per-class tables;
+- development-only controller feature and action-space ablations;
+- rescue/harm summaries and qualitative examples;
+- supervised and zero-shot confusion matrices;
+- per-language delta and fixed-policy comparison figures;
+- efficiency accounting with explicit latency caveats;
+- a publication manifest tying the package back to the pre-test freeze.
+
+The held-out test outputs must not be used to tune the frozen Stage-1 models.
+Any new controller architecture is a separately named Stage-2 experiment.
+
+See `RESEARCH_DESIGN.md`, `EXPERIMENTS.md`, and
+`docs/FINAL_RESULTS_STAGE1.md` for the protocol and final Stage-1 conclusions.

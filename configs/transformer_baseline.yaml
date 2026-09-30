@@ -1,0 +1,39 @@
+seed: 42
+
+data:
+  root: data/afrisenti_clean
+  supervised_languages:
+    - amh
+    - arq
+    - ary
+    - hau
+    - ibo
+    - kin
+    - pcm
+    - por
+    - swa
+    - tso
+    - twi
+    - yor
+  zero_shot_languages:
+    - orm
+    - tir
+
+model:
+  name: Davlan/afro-xlmr-base-114L
+  max_length: 128
+
+training:
+  epochs: 3
+  learning_rate: 0.00002
+  weight_decay: 0.01
+  warmup_ratio: 0.10
+  train_batch_size: 16
+  eval_batch_size: 32
+  gradient_accumulation_steps: 2
+  early_stopping_patience: 1
+  metric_for_best_model: macro_f1
+  fp16: true
+
+output:
+  root: outputs/transformer_baseline

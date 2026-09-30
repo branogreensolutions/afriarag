@@ -116,3 +116,38 @@ Any new controller architecture is a separately named Stage-2 experiment.
 
 See `RESEARCH_DESIGN.md`, `EXPERIMENTS.md`, and
 `docs/FINAL_RESULTS_STAGE1.md` for the protocol and final Stage-1 conclusions.
+
+
+## Stage 2: modern transformer comparator
+
+Stage 1 remains frozen. A separately specified supporting comparator fine-tunes
+`Davlan/afro-xlmr-base-114L` on the leakage-safe 12-language supervised
+training set, selects the best epoch on supervised development data, writes its
+own pre-test freeze manifest, and then evaluates supervised test plus strict
+zero-shot Oromo/Tigrinya.
+
+Install the optional training dependency:
+
+```bash
+python -m pip install -r requirements-transformer.txt
+```
+
+Train and freeze the comparator:
+
+```bash
+python scripts/train_transformer_baseline.py
+```
+
+Review `outputs/transformer_baseline/dev_summary.json` and the generated
+`pretest_freeze_manifest.json`. Do not change the fixed configuration from test
+results.
+
+Then evaluate once:
+
+```bash
+python scripts/evaluate_transformer_baseline.py
+```
+
+Because this comparator was specified after the Stage-1 test had already been
+inspected, its comparison is supporting/exploratory rather than part of the
+original Stage-1 confirmatory test.

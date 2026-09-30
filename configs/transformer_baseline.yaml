@@ -28,12 +28,12 @@ training:
   learning_rate: 0.00002
   weight_decay: 0.01
   warmup_ratio: 0.10
-  train_batch_size: 16
-  eval_batch_size: 32
-  gradient_accumulation_steps: 2
+  train_batch_size: 8
+  eval_batch_size: 16
+  gradient_accumulation_steps: 4
   early_stopping_patience: 1
   metric_for_best_model: macro_f1
-  fp16: true
+  fp16: true\n  gradient_checkpointing: true
 
 output:
   root: outputs/transformer_baseline

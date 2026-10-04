@@ -24,8 +24,21 @@ LABELS = ["negative", "neutral", "positive"]
 
 def normalize_transformer(df):
     x = df.copy()
+    rename = {}
     if "label" in x.columns and "gold" not in x.columns:
-        x = x.rename(columns={"label": "gold"})
+        rename["label"] = "gold"
+    if "id" in x.columns and "query_id" not in x.columns:
+        rename["id"] = "query_id"
+    if rename:
+        x = x.rename(columns=rename)
+
+    required = {"language", "query_id", "gold", "prediction"}
+    missing = sorted(required - set(x.columns))
+    if missing:
+        raise ValueError(
+            f"Transformer prediction file is missing required columns: {missing}. "
+            f"Available columns: {list(x.columns)}"
+        )
     return x
 
 

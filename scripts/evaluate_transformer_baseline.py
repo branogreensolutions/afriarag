@@ -121,7 +121,10 @@ def main():
     # fix_mistral_regex warning for non-Mistral tokenizers. Use the explicit
     # XLM-R fast tokenizer class to preserve the saved tokenizer without
     # applying an unrelated Mistral regex rewrite.
-    tokenizer = XLMRobertaTokenizerFast.from_pretrained(model_dir)
+    tokenizer = XLMRobertaTokenizerFast.from_pretrained(
+        model_dir,
+        fix_mistral_regex=False,
+    )
     model = AutoModelForSequenceClassification.from_pretrained(model_dir)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

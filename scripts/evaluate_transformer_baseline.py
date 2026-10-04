@@ -20,7 +20,7 @@ import pandas as pd
 import torch
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, DataCollatorWithPadding
+from transformers import AutoModelForSequenceClassification, DataCollatorWithPadding, XLMRobertaTokenizerFast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from afriarag.core import load_split, read_config
@@ -116,7 +116,12 @@ def main():
             "Missing transformer pre-test freeze manifest. Train/freeze the comparator before test evaluation."
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    # AfroXLM-R is an XLM-R model. Loading the locally saved tokenizer through
+    # AutoTokenizer can trigger Transformers' known false-positive
+    # fix_mistral_regex warning for non-Mistral tokenizers. Use the explicit
+    # XLM-R fast tokenizer class to preserve the saved tokenizer without
+    # applying an unrelated Mistral regex rewrite.
+    tokenizer = XLMRobertaTokenizerFast.from_pretrained(model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(model_dir)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -151,3 +151,28 @@ python scripts/evaluate_transformer_baseline.py
 Because this comparator was specified after the Stage-1 test had already been
 inspected, its comparison is supporting/exploratory rather than part of the
 original Stage-1 confirmatory test.
+
+
+## Post-review robustness analyses
+
+After independent manuscript review, three fixed robustness analyses were added
+without changing the frozen Stage-1/Stage-2 systems:
+
+```bash
+python scripts/run_true_action_space_ablation.py
+python scripts/analyze_macrolang_bootstrap.py
+python scripts/run_transformer_multiseed_robustness.py
+```
+
+The transformer robustness script uses exactly seeds 42, 43, and 44 and the
+unchanged `configs/transformer_baseline.yaml`. It reuses the original frozen
+seed-42 outputs by default and trains only missing seeds, typically 43 and 44.
+
+The action-space analysis retrains Controller v2 separately inside each
+development-only action subset using the same nested grouped CV and penalty
+search. It does not read held-out test labels.
+
+The MacroLangF1 analysis is reporting-only and computes paired, within-language
+bootstrap confidence intervals from frozen predictions.
+
+See `docs/POST_REVIEW_ROBUSTNESS.md` for the reporting status and output files.

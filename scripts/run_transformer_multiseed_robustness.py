@@ -259,6 +259,7 @@ def reuse_original_seed42(cfg, root):
     required = [
         original / "dev_summary.json",
         original / "test_summary.json",
+        original / "dev_predictions.csv",
         original / "supervised_test_predictions.csv",
         original / "zero_shot_test_predictions.csv",
     ]
@@ -274,10 +275,11 @@ def reuse_original_seed42(cfg, root):
     dev_summary = json.loads(
         (original / "dev_summary.json").read_text(encoding="utf-8")
     )
+    dev = pd.read_csv(original / "dev_predictions.csv")
     sup = pd.read_csv(original / "supervised_test_predictions.csv")
     zs = pd.read_csv(original / "zero_shot_test_predictions.csv")
 
-    if "label" not in sup.columns or "label" not in zs.columns:
+    if any("label" not in df.columns for df in [dev, sup, zs]):
         raise RuntimeError("Original seed-42 prediction files are missing labels.")
 
     # Recompute seed-42 metrics through the same functions used for new seeds.
@@ -287,18 +289,16 @@ def reuse_original_seed42(cfg, root):
         "model": cfg["model"]["name"],
         "best_model_checkpoint": dev_summary.get("best_model_checkpoint"),
         "best_dev_metric": dev_summary.get("best_dev_metric"),
-        "development": {
-            "n": int(dev_summary.get("dev_rows", 12004)),
-            "languages": 12,
-            "macro_f1": float(dev_summary["dev_macro_f1"]),
-            "accuracy": float(dev_summary["dev_accuracy"]),
-            "macro_lang_f1": None,
-        },
+        "development": summarize(dev),
         "supervised_test": summarize(sup),
         "strict_zero_shot_test": summarize(zs),
         "target_language_labels_used_for_training_or_selection": False,
     }
 
+    shutil.copy2(
+        original / "dev_predictions.csv",
+        target / "dev_predictions.csv",
+    )
     shutil.copy2(
         original / "supervised_test_predictions.csv",
         target / "supervised_test_predictions.csv",
